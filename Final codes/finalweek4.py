@@ -1,3 +1,34 @@
+#3D 
+# edges are movabe 
+#info about edges and nodes
+#reset node btn 
+#node 100 should be aim
+#doubleclick on background => first state 
+#change selected edges and nodes color 
+#capacity 5-50
+#1-100 nodes
+
+"""
+| Feature                         | Status | Description                                                                 |
+|---------------------------------|--------|-----------------------------------------------------------------------------|
+| 3D Graph                        | ✔      | Rendered with `3d-force-graph` and `three.js` in the browser.              |
+| Movable Nodes (drag support)    | ✔      | Node positions can be adjusted and fixed manually by dragging.            |
+| Node and Edge Info Display      | ✔      | Clicking nodes/edges shows their info in a side info box.                 |
+| Target Node Highlight (N100)    | ✔      | Node N100 is styled with a pink sprite to indicate the goal/target.       |
+| Reset Node Positions Button     | ✔      | A button clears fixed positions and reheats the graph layout.             |
+| Double-Click to Reset View      | ✔      | Double-click resets camera view, clears colors, and info box content.     |
+| Highlight Selected Nodes/Edges  | ✔      | Selected node turns red, selected edge turns orange.                      |
+| Edge Capacities (5-50)          | ✔      | Capacities are assigned randomly between 5 and 50.                        |
+| 100 Nodes (N1 to N100)          | ✔      | Graph consists of 100 nodes with backbone and additional random edges.    |
+
+
+- Dash (for the interactive web app interface)
+- Dash Extensions (for enhanced callback support via `DashProxy`)
+- NetworkX (to generate and manage the graph structure)
+- three.js + 3d-force-graph (for client-side 3D rendering and interaction)
+
+"""
+
 import dash
 from dash import html
 from dash_extensions.enrich import DashProxy, TriggerTransform, MultiplexerTransform
@@ -7,8 +38,8 @@ import random
 import json
 
 # ----------- Build NetworkX Graph -----------
-nodes = [f"N{i}" for i in range(1, 2001)]
-backbone_edges = [(f"N{i}", f"N{i+1}", random.randint(5, 15)) for i in range(1, 2000)]
+nodes = [f"N{i}" for i in range(1, 101)]
+backbone_edges = [(f"N{i}", f"N{i+1}", random.randint(5, 15)) for i in range(1, 100)]
 
 extra_edges = []
 for _ in range(100):
@@ -25,21 +56,10 @@ for u, v, cap in edges:
     if u != "N100":
         G.add_edge(u, v, capacity=cap)
 
-# Identify root/source node
-source_candidates = [n for n in G.nodes if nx.descendants(G, n) >= set(G.nodes) - {n}]
-root_node = source_candidates[0] if source_candidates else "N1"
-
-# Update graph data
 graph_data = {
-    "nodes": [
-        {"id": node, "name": node, "isRoot": node == root_node, "isAim": node == "N100"}
-        for node in G.nodes()
-    ],
-    "links": [
-        {"source": u, "target": v, "capacity": G[u][v]['capacity']} for u, v in G.edges()
-    ]
+    "nodes": [{"id": node, "name": node} for node in G.nodes()],
+    "links": [{"source": u, "target": v, "capacity": G[u][v]['capacity']} for u, v in G.edges()]
 }
-
 node_info = {
     node: {
         "incoming": [(u, v, G[u][v]['capacity']) for u, v in G.in_edges(node)],
@@ -47,7 +67,6 @@ node_info = {
     }
     for node in G.nodes
 }
-
 edge_info = {
     f"{u}->{v}": {"source": u, "target": v, "capacity": G[u][v]['capacity']}
     for u, v in G.edges
@@ -57,6 +76,7 @@ graph_data_json = json.dumps(graph_data)
 node_info_json = json.dumps(node_info)
 edge_info_json = json.dumps(edge_info)
 
+# ----------- Dash App Setup -----------
 external_scripts = [
     "https://unpkg.com/three@0.150.1/build/three.min.js",
     "https://unpkg.com/3d-force-graph"
@@ -84,6 +104,7 @@ app.layout = html.Div([
     ], style={"position": "relative", "height": "100vh", "width": "100vw"})
 ])
 
+# ----------- Clientside Callback -----------
 app.clientside_callback(
     f"""
     function(n_clicks) {{
@@ -111,13 +132,7 @@ app.clientside_callback(
                 .backgroundColor('#000')
 
                 .nodeThreeObject(node => {{
-                    if (node.isRoot) {{
-                        const root = new THREE.Mesh(
-                            new THREE.SphereGeometry(8),
-                            new THREE.MeshBasicMaterial({{ color: 'yellow' }})
-                        );
-                        return root;
-                    }} else if (node.isAim) {{
+                    if (node.id === "N100") {{
                         const sprite = new THREE.Sprite(
                             new THREE.SpriteMaterial({{ color: 'deeppink' }})
                         );
@@ -164,7 +179,9 @@ app.clientside_callback(
                     node.fz = node.z;
                 }});
 
-            document.getElementById("reset-btn").addEventListener("click", () => {{
+            // Handle reset button
+            const resetBtn = document.getElementById("reset-btn");
+            resetBtn.addEventListener("click", () => {{
                 fg.graphData().nodes.forEach(node => {{
                     delete node.fx;
                     delete node.fy;
@@ -173,6 +190,7 @@ app.clientside_callback(
                 fg.d3ReheatSimulation();
             }});
 
+            // Handle double click to reset visuals
             graphContainer.addEventListener("dblclick", function(event) {{
                 fg.cameraPosition(
                     {{ x: 0, y: 0, z: 500 }},
@@ -194,5 +212,6 @@ app.clientside_callback(
     Input("reset-btn", "n_clicks")
 )
 
+# ----------- Run App -----------
 if __name__ == '__main__':
     app.run(debug=True)
