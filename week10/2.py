@@ -1,5 +1,4 @@
 #Multistep attack 
-#improved Edges
 
 import dash
 from dash import html, dcc
@@ -91,7 +90,7 @@ def create_graph_data(G):
         ]
     }
 
-def multi_step_attack(G, source, sink, information='capacity', steps=3, edges_per_step=30, budget=None):
+def multi_step_attack(G, source, sink, information='capacity', steps=3, edges_per_step=2, budget=None):
     G_copy = copy.deepcopy(G)
     flow_value_before, flow_dict = nx.maximum_flow(G_copy, source, sink)
     results = [(0, flow_value_before, [])]
@@ -394,7 +393,7 @@ app.clientside_callback(
                     .linkColor(link => link.color || (link.capacity > 40 ? '#000' : '#999'))
                     .linkWidth(link => Math.max(0.5, Math.min(link.capacity / 10, 3)))
 
-                    .backgroundColor('#F0F0F0')
+                    .backgroundColor('gray')
                     .nodeThreeObject(node => {
                         const THREE = window.THREE;
                         let color = 'blue';
