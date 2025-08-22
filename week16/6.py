@@ -1,10 +1,10 @@
 # Dash + 3D Force Graph app (strict edge consistency + matched labels)
-# Fixes:
-# - Attack dropdown can be used repeatedly (no permanent hide)
-# - Preserve red attacked links on link clicks
-# - File-path guard with friendly initial info
-# - Robust label helper + SP cache in Show Attacked
-# - Minor type/label safety, pinned 3d-force-graph version
+# - Affected Edges list derived from EXACT red links painted on the graph
+# - Text labels use original numeric IDs (same as graph tooltip) -> no +1 confusion
+# - Multi-step attack targets flow-carrying edges by default
+# - Live info panel (reads from current graphData)
+# - Consistent JSON store usage
+# - Optional env-based file path
 
 import os
 import dash
@@ -43,10 +43,9 @@ def parse_adjacency_list(file_path, max_nodes=1036):
                 if tgt_id >= max_nodes:
                     continue
                 tgt = str(tgt_id)
-                # Cast once to ints if capacities are integral in your model
                 G.add_edge(
                     src, tgt,
-                    capacity=int(float(cap_s)),
+                    capacity=float(cap_s),
                     attack_cost=float(cost_s),
                     can_attack=(float(att_s) == 1.0)
                 )
@@ -82,9 +81,8 @@ def _relabel_numeric_to_contract(G, src_numeric: str, dst_numeric: str):
         nonlocal next_label_index
         while True:
             next_label_index += 1
-            candidate = f"N{next_label_index}"
-            if candidate not in mapping.values():
-                return candidate
+            if next_label_index not in (1, 1036):
+                return f"N{next_label_index}"
 
     for n in nodes_sorted:
         if n in (src_numeric, dst_numeric):
@@ -301,15 +299,7 @@ file_path = os.getenv("GRAPH_FILE") or "/Users/miraki/Desktop/sem3/flowua/code/N
 RAW_SOURCE = "0"
 RAW_TARGET = "1035"
 
-file_warning = ""
-if not os.path.exists(file_path):
-    # Fallback so app boots
-    G_raw = nx.DiGraph()
-    G_raw.add_edge("0", "1035", capacity=10, attack_cost=1, can_attack=True)
-    file_warning = f"⚠️ Graph file not found at: {file_path}. Loaded a tiny fallback graph."
-else:
-    G_raw = parse_adjacency_list(file_path, max_nodes=1036)
-
+G_raw = parse_adjacency_list(file_path, max_nodes=1036)
 _ensure_capacity(G_raw, min_cap=1)
 G = _relabel_numeric_to_contract(G_raw, RAW_SOURCE, RAW_TARGET)
 G.remove_edges_from(list(G.in_edges(SRC_LABEL)))
@@ -320,7 +310,7 @@ graph_data_json = json.dumps(create_graph_data(G))
 
 external_scripts = [
     "https://unpkg.com/three@0.150.1/build/three.min.js",
-    "https://unpkg.com/3d-force-graph@1.73.3"
+    "https://unpkg.com/3d-force-graph"
 ]
 external_stylesheets = [
     "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"
@@ -371,19 +361,9 @@ dropdown_button_style = {**button_style, "backgroundColor": "#0069D9", "marginBo
 
 # ---- label helper so text matches graph tooltip exactly ----
 def display_node_label(nid: str) -> str:
-    try:
-        return str(G.nodes[nid].get("name", nid))
-    except Exception:
-        return str(nid)
-
-# Initial info box
-initial_info_children = [
-    html.H4("Ready"),
-    html.P("Use ‘Run Attack’ to simulate, ‘Show Attacked Edges’ for a focused view, double-click to reset camera.")
-]
-if file_warning:
-    initial_info_children.append(html.P(file_warning))
-initial_info = html.Div(initial_info_children)
+    # Use the original numeric stored in node['name'] when available
+    orig = G.nodes[nid].get("name", nid)
+    return str(orig)
 
 app.layout = html.Div([
     html.Div([
@@ -405,7 +385,7 @@ app.layout = html.Div([
         html.Button("Legend", id="toggle-legend-btn", n_clicks=0, style=button_style),
 
         html.Div(id="color-legend-box", style={"display": "none"}, children=create_color_legend()),
-        html.Div(id="info-box", style=box_style, children=initial_info),
+        html.Div(id="info-box", style=box_style),
         html.Div(id="affected-edges-box", style={**affected_edges_style, "display": "none"}),
         html.Div(id="capacity-box", style={**capacity_box_style, "display": "none"}),
     ], style=sidebar_style),
@@ -435,16 +415,25 @@ def toggle_color_legend(n_clicks, current_style):
     else:
         return {**current_style, "display": "none"}
 
-# Dropdown open/close — simple, toggle only by the parent button
+# Dropdown open/close
 app.clientside_callback(
     """
-    function(runClicks) {
-        const open = (runClicks || 0) % 2 === 1;
-        return { display: open ? "block" : "none" };
+    function(runClicks, budgetClicks, multiClicks) {
+        const options = document.getElementById("attack-options");
+        if ((budgetClicks && budgetClicks > 0) || (multiClicks && multiClicks > 0)) {
+            return {"display": "none"};
+        }
+        if ((runClicks || 0) % 2 === 1) {
+            return {"display": "block"};
+        } else {
+            return {"display": "none"};
+        }
     }
     """,
     Output("attack-options", "style"),
-    Input("attack-dropdown-btn", "n_clicks")
+    Input("attack-dropdown-btn", "n_clicks"),
+    Input("budgeted-attack-btn", "n_clicks"),
+    Input("multi-step-attack-btn", "n_clicks")
 )
 
 @app.callback(
@@ -496,12 +485,9 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
             global G
             G = copy.deepcopy(ORIGINAL_GRAPH)
             updated_json = json.dumps(create_graph_data(G))
-            msg = [html.H4("Graph Reset"), html.P("Restored to original state")]
-            if file_warning:
-                msg.append(html.P(file_warning))
             return (
                 "reset",
-                html.Div(msg),
+                html.Div([html.H4("Graph Reset"), html.P("Restored to original state")]),
                 updated_json,
                 dash.no_update, {"display": "none"},
                 dash.no_update, {"display": "none"},
@@ -524,14 +510,17 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
 
         flow_before, flow_after = budgeted_attack(G, "N1", "N1036", budget=150)
 
+        # authoritative diffs after mutation
         attacked_rows_true = edge_diffs(caps_before, G)
         attacked_edge_pairs = {(r["source"], r["target"]) for r in attacked_rows_true}
 
         updated_data = create_graph_data(G)
+        # paint red
         for link in updated_data["links"]:
             if (link["source"], link["target"]) in attacked_edge_pairs:
                 link["color"] = "red"
 
+        # build the box strictly from the painted links (and show numeric labels)
         rows = rows_from_red_links(updated_data["links"], caps_before, G)
         affected_edges_content = html.Div([
             html.H4("Affected Edges"),
@@ -563,6 +552,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
             html.P(f"Capacity reduced by: {reduction} ({percent:.1f}%)")
         ])
 
+        # store EXACT rows used by the box (and by red links)
         attacked_edges_list = rows
 
         return (
@@ -591,10 +581,12 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
         attacked_edge_pairs = {(r["source"], r["target"]) for r in attacked_rows_true}
 
         updated_data = create_graph_data(G)
+        # paint red
         for link in updated_data["links"]:
             if (link["source"], link["target"]) in attacked_edge_pairs:
                 link["color"] = "red"
 
+        # build the box strictly from the painted links (and show numeric labels)
         rows = rows_from_red_links(updated_data["links"], caps_before, G)
         affected_edges_content = html.Div([
             html.H4("Affected Edges"),
@@ -634,6 +626,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
             html.P(f"Reduction: {flow_reduction} ({flow_pct:.1f}%)"),
         ])
 
+        # store EXACT rows used by the box (and by red links)
         attacked_edges_list = rows
 
         return (
@@ -647,80 +640,80 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
             pre_attack_data
         )
 
-    # ---------- SHOW ATTACKED EDGES ----------
+    # ---------- SHOW ATTACKED EDGES (paths view) ----------
     elif trigger == "show-attack-btn":
         if not attacked_edges_data:
             return dash.no_update, *([dash.no_update] * 9)
 
-        base_data = create_graph_data(G)
-        attacked_pairs = {(row["source"], row["target"]) for row in attacked_edges_data}
-        node_index = {n["id"]: n for n in base_data["nodes"]}
-        link_index = {(l["source"], l["target"]): l for l in base_data["links"]}
+        current_data = json.loads(current_graph_data)
+        path_colors = ["green", "blue", "purple", "cyan", "brown", "magenta"]
 
         nodes_to_show = set()
-        links_to_show = {}
+        filtered_links = []
+        colored_paths_info = []
 
-        def _add_link(u, v, color):
-            if (u, v) not in link_index:
-                return
-            base = link_index[(u, v)].copy()
-            prev = links_to_show.get((u, v))
-            if prev and prev.get("color") == "red":
-                return
-            if color == "red":
-                base["color"] = "red"
-            else:
-                base["color"] = prev.get("color") if (prev and prev.get("color") == "red") else color
-            links_to_show[(u, v)] = base
-            nodes_to_show.add(u); nodes_to_show.add(v)
-
-        for (u, v) in attacked_pairs:
-            _add_link(u, v, "red")
-
-        # Shortest path cache
-        _sp_cache = {}
         def _sp(a, b):
-            key = (a, b)
-            if key in _sp_cache:
-                return _sp_cache[key]
             try:
-                p = nx.shortest_path(G, a, b)
+                return nx.shortest_path(G, a, b)
             except nx.NetworkXNoPath:
-                p = []
-            _sp_cache[key] = p
-            return p
+                return []
 
-        for (u, v) in attacked_pairs:
+        MAX_EDGES_TO_SHOW = 6
+        attacked_subset = attacked_edges_data[:MAX_EDGES_TO_SHOW]
+
+        for idx, edge in enumerate(attacked_subset):
+            u, v = edge["source"], edge["target"]
+            color = path_colors[idx % len(path_colors)]
+
             left = _sp("N1", u)
-            if left and len(left) > 1:
-                for a, b in zip(left, left[1:]):
-                    _add_link(a, b, "green")
             right = _sp(v, "N1036")
-            if right and len(right) > 1:
-                for a, b in zip(right, right[1:]):
-                    _add_link(a, b, "purple")
+            if not left or not right:
+                continue
 
-        attacked_nodes = [node_index[nid] for nid in nodes_to_show if nid in node_index]
-        attacked_links = list(links_to_show.values())
+            full_nodes = left + right
+            if left and right and (left[-1] != u or right[0] != v):
+                full_nodes = left + [v] + right[1:]
+
+            for n in full_nodes:
+                nodes_to_show.add(n)
+
+            path_edges = list(zip(full_nodes, full_nodes[1:]))
+
+            for a, b in path_edges:
+                link_color = "red" if (a == u and b == v) else color
+                filtered_links.append({"source": a, "target": b, "color": link_color})
+
+            colored_paths_info.append((path_edges, (u, v), color))
 
         filtered_data = {
-            "nodes": attacked_nodes,
-            "links": attacked_links
+            "nodes": [node for node in current_data["nodes"] if node["id"] in nodes_to_show],
+            "links": []
         }
 
-        def _numlabel(nid: str) -> str:
-            return str(node_index.get(nid, {}).get("name", nid))
+        link_index = {(l["source"], l["target"]): l for l in current_data["links"]}
+        for f in filtered_links:
+            if (f["source"], f["target"]) in link_index:
+                new_link = link_index[(f["source"], f["target"])].copy()
+                new_link["color"] = f["color"]
+                filtered_data["links"].append(new_link)
 
-        info_children = [
-            html.H4("Attacked Edges (All) + Context"),
-            html.P(f"Total attacked edges: {len(attacked_pairs)}"),
-            html.P("Colors: red = attacked edge, green = N1→edge-source, purple = edge-target→N1036."),
-            html.Ul([
-                html.Li(f"{_numlabel(u)} → {_numlabel(v)}")
-                for (u, v) in sorted(attacked_pairs)
-            ], style={"maxHeight": "260px", "overflowY": "auto", "margin": 0, "paddingLeft": "18px"})
-        ]
-        info_box_content = html.Div(info_children)
+        # Use numeric labels in the path info text
+        path_info_children = [html.H4("Affected Paths")]
+        for i, (path_edges, attacked_uv, color) in enumerate(colored_paths_info):
+            if not path_edges:
+                continue
+            full_path_nodes = [path_edges[0][0]] + [vv for _, vv in path_edges]
+            # map ids to original numeric labels for display
+            full_path_text = " → ".join(display_node_label(n) for n in full_path_nodes)
+            attacked_text = f"{display_node_label(attacked_uv[0])} → {display_node_label(attacked_uv[1])}"
+            color_dot = html.Span("⬤", style={"color": color, "marginRight": "6px"})
+            path_info_children.append(
+                html.Div([
+                    html.Strong([color_dot, f" Path {i+1} (Attacked: {attacked_text})"]),
+                    html.P(full_path_text, style={"fontSize": "13px", "marginLeft": "12px"})
+                ])
+            )
+        info_box_content = html.Div(path_info_children)
 
         return (
             "show-attacked",
@@ -753,7 +746,7 @@ app.clientside_callback(
                 fg.d3Force('center', null);
 
                 fg.graphData(graphData)
-                  .nodeLabel(node => `<span style="color: black;">${node.name}</span>`)
+                  .nodeLabel('name')  // shows original numeric label on hover
                   .nodeRelSize(8)
                   .nodeAutoColorBy('id')
                   .linkColor(link => link.color || (link.capacity > 40 ? '#000' : '#aaa'))
@@ -780,7 +773,6 @@ app.clientside_callback(
                         .filter(l => (l.target.id || l.target) === node.id)
                         .map(l => [ (l.source.id || l.source), (l.target.id || l.target), l.capacity ]);
 
-                      // Render info via direct DOM write (kept from original pattern)
                       infoBox.innerHTML = `
                           <h4>Selected Node: ${node.name ?? node.id}</h4>
                           <strong>Outgoing Edges (${outgoing.length}):</strong>
@@ -799,18 +791,13 @@ app.clientside_callback(
                       const dst = (link.target.id || link.target);
                       const srcName = gd.nodes.find(n=>n.id===src)?.name ?? src;
                       const dstName = gd.nodes.find(n=>n.id===dst)?.name ?? dst;
-
-                      // Preserve red (attacked) links; clear only non-red highlight colors
-                      gd.links.forEach(l => { if (l.color && l.color !== 'red') delete l.color; });
-                      if (link.color !== 'red') link.color = 'orange';
-
-                      // Info panel
-                      const infoBox = document.getElementById("info-box");
                       infoBox.innerHTML = `
                           <h4>Selected Edge</h4>
                           <p><strong>${srcName} → ${dstName}</strong></p>
                           <p>Capacity: ${link.capacity}</p>
                       `;
+                      gd.links.forEach(l => delete l.color);
+                      link.color = 'orange';
                       fg.refresh();
                   })
                   .onNodeDragEnd(node => {
@@ -823,9 +810,8 @@ app.clientside_callback(
                     fg.cameraPosition({ x: 0, y: 0, z: 500 }, { x: 0, y: 0, z: 0 }, 1000);
                     const gd = fg.graphData();
                     gd.nodes.forEach(n => { if (!n.isRoot && !n.isAim) { delete n.color; delete n.fx; delete n.fy; delete n.fz; } });
-                    gd.links.forEach(l => { if (l.color && l.color !== 'red') delete l.color; }); // keep attacked red
+                    gd.links.forEach(l => delete l.color);
                     fg.nodeAutoColorBy('id');
-                    const infoBox = document.getElementById("info-box");
                     infoBox.innerHTML = '';
                     fg.refresh();
                     fg.d3ReheatSimulation();
@@ -848,10 +834,9 @@ app.clientside_callback(
                 window.fgInstance.cameraPosition({ x: 0, y: 0, z: 500 }, { x: 0, y: 0, z: 0 }, 1000);
                 const gd = window.fgInstance.graphData();
                 gd.nodes.forEach(n => { delete n.color; delete n.fx; delete n.fy; delete n.fz; });
-                gd.links.forEach(l => { if (l.color && l.color !== 'red') delete l.color; });
+                gd.links.forEach(l => delete l.color);
                 window.fgInstance.nodeAutoColorBy('id');
-                const infoBox = document.getElementById("info-box");
-                infoBox.innerHTML = '';
+                document.getElementById("info-box").innerHTML = '';
                 window.fgInstance.d3ReheatSimulation();
             }
             window.fgInstance.refresh();

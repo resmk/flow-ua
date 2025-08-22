@@ -1,0 +1,23 @@
+past code:
+Strategy: enumerate all simple paths from source → target with a cutoff, then for each attacked edge pick the first path that contains it and color that path (attacked edge in red, the rest in per-path colors).
+Fragility issues:
+nx.all_simple_paths(..., cutoff=20) can be very expensive or return none if cutoff is too small.
+If no path contains a given attacked edge (or graph state mismatches), nothing changes → feels like button does nothing.
+Re-coloring is O(P×E) due to nested loops.
+
+Code 2 (working)
+
+Strategy: for each attacked edge (u, v), build one representative path by stitching two shortest paths:
+left = shortest path from source (N1) to u
+right = shortest path from v to target (N100)
+concatenate (and ensure u→v is present)
+
+Stability wins:
+No global path enumeration → fast & deterministic.
+Cap number of attacked edges shown (e.g., 6) to keep UI snappy.
+Use a link index for O(E) recoloring.
+Code 2 succeeds by composing paths efficiently with shortest-paths and limiting visualization scope.
+
+Both codes have the same goal (show paths containing attacked edges),
+ but Code 1 does it by enumerating all paths, while Code 2 always composes a valid path using shortest-paths 
+ which is why it’s faster and more reliable.
