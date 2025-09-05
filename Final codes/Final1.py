@@ -5,6 +5,10 @@
 # - File-path guard with friendly initial info
 # - Robust label helper + SP cache in Show Attacked
 # - Minor type/label safety, pinned 3d-force-graph version
+"""
+change the PATH to your own graph file path Line 300 'file_path = os.getenv....'
+
+"""
 
 import os
 import dash
