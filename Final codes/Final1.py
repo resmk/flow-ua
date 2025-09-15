@@ -9,7 +9,6 @@
 change the PATH to your own graph file path Line 300 'file_path = os.getenv....'
 
 """
-
 import os
 import dash
 from dash import html, dcc
@@ -23,7 +22,7 @@ import copy
 # ---------- GRAPH GENERATION ----------
 
 SRC_LABEL = "N1"
-DST_LABEL = "N1036"
+DST_LABEL = "N1035"
 
 def parse_adjacency_list(file_path, max_nodes=1036):
     G = nx.DiGraph()
@@ -150,7 +149,7 @@ def create_color_legend():
         html.Div([html.Span("⬤", style={"color": "orange", "marginRight": "6px"}),
                   html.Span("Not currently used in this version", style={"fontSize": "14px"})], style={"marginBottom": "6px"}),
         html.Div([html.Span("⬤", style={"color": "purple", "marginRight": "6px"}),
-                  html.Span("Shortest path from the target of the attacked edge to the destination node (N1036)", style={"fontSize": "14px"})], style={"marginBottom": "6px"}),
+                  html.Span("Shortest path from the target of the attacked edge to the destination node (N1035)", style={"fontSize": "14px"})], style={"marginBottom": "6px"}),
         html.Hr(style={"margin": "10px 0"}),
         html.Div([html.Span("⬤", style={"color": "green", "marginRight": "6px"}),
                   html.Span("Source Node ", style={"fontSize": "14px"})], style={"marginBottom": "6px"}),
@@ -208,7 +207,14 @@ def rows_from_red_links(updated_data_links, caps_before, G_after):
     rows.sort(key=lambda r: r['reduction'], reverse=True)
     return rows
 
-def budgeted_attack(G, source="N1", sink="N1036", budget=150):
+def budgeted_attack(G, source=None, sink=None, budget=150):
+   
+    source = source or SRC_LABEL
+    sink   = sink   or DST_LABEL
+
+    if source not in G or sink not in G:
+        raise ValueError(f"Source '{source}' or sink '{sink}' not in graph nodes.")
+    
     G_copy = copy.deepcopy(G)
     flow_value_before, flow_dict = nx.maximum_flow(
         G_copy, source, sink, flow_func=nx.algorithms.flow.edmonds_karp
@@ -243,11 +249,13 @@ def budgeted_attack(G, source="N1", sink="N1036", budget=150):
 
     return flow_value_before, flow_value_after
 
-def multi_step_attack(G, source, sink, information='flow', steps=3, edges_per_step=30):
-    """
-    Iteratively reduce capacities on a working copy, then apply cumulative reductions to G.
-    Defaults to targeting edges carrying positive flow per step.
-    """
+def multi_step_attack(G, source=None, sink=None, information='flow', steps=3, edges_per_step=30):
+    source = source or SRC_LABEL
+    sink   = sink   or DST_LABEL
+
+    if source not in G or sink not in G:
+        raise ValueError(f"Source '{source}' or sink '{sink}' not in graph nodes.")
+    
     caps_before = snapshot_caps(G)
     G_pristine = copy.deepcopy(G)
     G_copy = copy.deepcopy(G)
@@ -295,7 +303,7 @@ def multi_step_attack(G, source, sink, information='flow', steps=3, edges_per_st
     return flow_before, flow_after
 
 # --- load your file graph and adapt it to the app contract ---
-file_path = os.getenv("GRAPH_FILE") or "/Users/miraki/Desktop/sem3/flowua/code/NEW GRAPH/graph.text"
+file_path = os.getenv("GRAPH_FILE") or "/Users/miraki/Desktop/Final code/graph.text"
 RAW_SOURCE = "0"
 RAW_TARGET = "1035"
 
@@ -310,6 +318,12 @@ else:
 
 _ensure_capacity(G_raw, min_cap=1)
 G = _relabel_numeric_to_contract(G_raw, RAW_SOURCE, RAW_TARGET)
+missing = [x for x in (SRC_LABEL, DST_LABEL) if x not in G.nodes]
+if missing:
+    raise RuntimeError(
+        f"Graph missing required node(s): {missing}. "
+        f"Check parse_adjacency_list max_nodes (should be 1036) and RAW_TARGET ('{RAW_TARGET}')."
+    )
 G.remove_edges_from(list(G.in_edges(SRC_LABEL)))
 
 ORIGINAL_GRAPH = copy.deepcopy(G)
@@ -511,7 +525,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
     elif trigger == "jump-source-btn":
         return "jump-N1", *([dash.no_update] * 9)
     elif trigger == "jump-aim-btn":
-        return "jump-N1036", *([dash.no_update] * 9)
+        return f"jump-{DST_LABEL}", *([dash.no_update] * 9)
 
     # ---------- BUDGETED ATTACK ----------
     elif trigger == "budgeted-attack-btn":
@@ -520,7 +534,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
         caps_before = snapshot_caps(G)
         total_capacity_before = calculate_total_capacity(G)
 
-        flow_before, flow_after = budgeted_attack(G, "N1", "N1036", budget=150)
+        flow_before, flow_after = budgeted_attack(G, "N1", "N1035", budget=150)
 
         attacked_rows_true = edge_diffs(caps_before, G)
         attacked_edge_pairs = {(r["source"], r["target"]) for r in attacked_rows_true}
@@ -582,7 +596,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
         total_capacity_before = calculate_total_capacity(G)
 
         flow_before, flow_after = multi_step_attack(
-            G, "N1", "N1036", information='flow', steps=3, edges_per_step=10
+            G, "N1", "N1035", information='flow', steps=3, edges_per_step=10
         )
 
         attacked_rows_true = edge_diffs(caps_before, G)
@@ -693,7 +707,7 @@ def unified_callback(jump_source, jump_aim, restore, budgeted_attack_clicks, sho
             if left and len(left) > 1:
                 for a, b in zip(left, left[1:]):
                     _add_link(a, b, "green")
-            right = _sp(v, "N1036")
+            right = _sp(v, DST_LABEL)
             if right and len(right) > 1:
                 for a, b in zip(right, right[1:]):
                     _add_link(a, b, "purple")
