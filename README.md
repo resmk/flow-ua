@@ -28,8 +28,7 @@ pip install dash dash-extensions networkx
 ```
 3.Run the app:
 ```
-python app.py
+python Final1.py
 ```
 4.Open: http://127.0.0.1:8050
-
 
